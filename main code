@@ -1,0 +1,124 @@
+#How to Run:
+#Clone the repository, install the dependencies via pip install httpx, and execute the script using python main.py.
+
+========================================================================================================================================
+### 🛠 Need Custom Features, Scaling, or Priority Support?
+Building a production system or need this tuned for your specific infrastructure? 
+
+* ⚡️ Custom Integration & Anti-Bot Bypass
+* 🚀 Dedicated Infrastructure Setup
+* 💬 Direct Dev Support: [@Myhamed91](https://t.me/Myhamed91)
+========================================================================================================================================
+
+#How to Run:
+#Clone the repository, install the dependencies via pip install httpx, and execute the script using python main.py.
+
+import asyncio
+import json
+import random
+from typing import Dict, Any, Optional
+import httpx
+
+# A pool of realistic User-Agents to mimic standard browser signatures
+USER_AGENTS = [
+    "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36",
+    "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/17.4.1 Safari/605.1.15",
+    "Mozilla/5.0 (X11; Linux x86_64; rv:125.0) Gecko/20100101 Firefox/125.0"
+]
+
+class ResilientScraperEngine:
+    def init(self, proxy_url: Optional[str] = None):
+        self.proxy_url = proxy_url
+        self.client = self._create_client()
+
+    def _get_headers(self) -> Dict[str, str]:
+        """Generate plausible headers to minimize the probability of blocking."""
+        return {
+            "User-Agent": random.choice(USER_AGENTS),
+            "Accept": "text/html,application/xhtml+xml,application/xml;q=0.9,image/avif,image/webp,*/*;q=0.8",
+            "Accept-Language": "en-US,en;q=0.5",
+            "Accept-Encoding": "gzip, deflate, br",
+            "DNT": "1",
+            "Connection": "keep-alive",
+            "Upgrade-Insecure-Requests": "1",
+            "Sec-Fetch-Dest": "document",
+            "Sec-Fetch-Mode": "navigate",
+            "Sec-Fetch-Site": "none",
+            "Sec-Fetch-User": "?1",
+        }
+
+    def _create_client(self) -> httpx.AsyncClient:
+        """Initialize the HTTP client with proxy support and custom timeouts."""
+        proxies = {"all://": self.proxy_url} if self.proxy_url else None
+        return httpx.AsyncClient(
+            proxies=proxies,
+            follow_redirects=True,
+            timeout=15.0,
+            http2=True # Enable HTTP/2 to match modern browser fingerprint standards
+        )
+
+    async def fetch_target(self, url: str) -> Dict[Any, Any]:
+        """Secure request execution with automated anti-bot status detection."""
+        headers = self._get_headers()
+        try:
+            response = await self.client.get(url, headers=headers)
+            
+            # Detect anti-fraud challenges (Cloudflare / Captcha triggers)
+            if response.status_code in [403, 429, 503]:
+                return {
+                    "status": "blocked",
+                    "code": response.status_code,
+                    "error": "Anti-bot challenge detected. Requires proxy rotation or signature update."
+                }
+            
+            response.raise_for_status()
+            
+            return {
+                "status": "success",
+                "code": response.status_code,
+                "url": str(response.url),
+                "content_length": len(response.text),
+                "sample_content": response.text[:500] # Return slice for structural analysis
+            }
+            
+        except httpx.RequestError as e:
+            return {
+                "status": "error",
+                "error": str(e)
+            }
+
+    async def close(self):
+        await self.client.aclose()
+
+
+async def main():
+    # Example usage against a test endpoint
+    target_url = "https://httpbin.org/headers"
+    
+    # Initialize engine (optional proxy format: "http://user:pass@ip:port")
+    scraper = ResilientScraperEngine(proxy_url=None)
+    
+    print(f"[*] Initializing target scan: {target_url}")
+    result = await scraper.fetch_target(target_url)
+    
+    print("\n[Execution Result]:")
+    print(json.dumps(result, indent=4, ensure_ascii=False))
+    
+    await scraper.close()
+
+if __name__ == "__main__":
+    asyncio.run(main())
+
+#How to Run:
+#Clone the repository, install the dependencies via pip install httpx, and execute the script using python main.py.
+
+
+========================================================================================================================================
+### 🛠 Need Custom Features, Scaling, or Priority Support?
+Building a production system or need this tuned for your specific infrastructure? 
+
+* ⚡️ Custom Integration & Anti-Bot Bypass
+* 🚀 Dedicated Infrastructure Setup
+* 💬 Direct Dev Support: [@Myhamed91](https://t.me/Myhamed91)
+========================================================================================================================================
+
