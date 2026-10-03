@@ -12,85 +12,91 @@
 
 #How to Run:
 #Clone the repository, install the dependencies via pip install httpx, and execute the script using python main.py.
-
 import asyncio
 import json
 import random
-from typing import Dict, Any, Optional
+import sys
 import httpx
-# A pool of realistic User-Agents to mimic standard browser signatures
+from tenacity import retry, stop_after_attempt, wait_exponential, retry_if_exception_type
+
+# Force UTF-8 output encoding to prevent Cyrillic and symbol corruption in Windows consoles
+if sys.stdout.encoding.lower() != 'utf-8':
+    sys.stdout.reconfigure(encoding='utf-8')
+
+# A pool of realistic browser User-Agents for anti-bot protection evasion
 USER_AGENTS = [
-    "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36",
-    "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/17.4.1 Safari/605.1.15",
-    "Mozilla/5.0 (X11; Linux x86_64; rv:125.0) Gecko/20100101 Firefox/125.0"
+    "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/125.0.0.0 Safari/537.36",
+    "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/17.5 Safari/605.1.15"
 ]
-class ResilientScraperEngine:
-    def init(self, proxy_url: Optional[str] = None):
-        self.proxy_url = proxy_url
-        self.client = self._create_client()
-    def _get_headers(self) -> Dict[str, str]:
-        """Generate plausible headers to minimize the probability of blocking."""
-        return {
-            "User-Agent": random.choice(USER_AGENTS),
-            "Accept": "text/html,application/xhtml+xml,application/xml;q=0.9,image/avif,image/webp,*/*;q=0.8",
-            "Accept-Language": "en-US,en;q=0.5",
-            "Accept-Encoding": "gzip, deflate, br",
-            "DNT": "1",
-            "Connection": "keep-alive",
-            "Upgrade-Insecure-Requests": "1",
-            "Sec-Fetch-Dest": "document",
-            "Sec-Fetch-Mode": "navigate",
-            "Sec-Fetch-Site": "none",
-            "Sec-Fetch-User": "?1",
-        }
-    def _create_client(self) -> httpx.AsyncClient:
-        """Initialize the HTTP client with proxy support and custom timeouts."""
-        proxies = {"all://": self.proxy_url} if self.proxy_url else None
-        return httpx.AsyncClient(
-            proxies=proxies,
-            follow_redirects=True,
-            timeout=15.0,
-            http2=True # Enable HTTP/2 to match modern browser fingerprint standards
-        )
-    async def fetch_target(self, url: str) -> Dict[Any, Any]:
-        """Secure request execution with automated anti-bot status detection."""
-        headers = self._get_headers()
+
+@retry(
+    stop=stop_after_attempt(3),
+    wait=wait_exponential(multiplier=1, min=2, max=10),
+    retry=retry_if_exception_type((httpx.RequestError, httpx.TimeoutException)),
+    reraise=True
+)
+async def fetch_with_retry(client: httpx.AsyncClient, url: str) -> httpx.Response:
+    headers = {
+        "User-Agent": random.choice(USER_AGENTS),
+        "Accept": "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8",
+        "Accept-Language": "en-US,en;q=0.9,ru;q=0.8",
+        "Accept-Encoding": "gzip, deflate, br",
+        "DNT": "1",
+        "Connection": "keep-alive",
+        "Upgrade-Insecure-Requests": "1"
+    }
+    return await client.get(url, headers=headers)
+
+async def resilient_scrape(url: str):
+    async with httpx.AsyncClient(follow_redirects=True, timeout=15.0, http2=True) as client:
         try:
-            response = await self.client.get(url, headers=headers)
-            # Detect anti-fraud challenges (Cloudflare / Captcha triggers)
+            response = await fetch_with_retry(client, url)
+            
+            # Automatically detect and fix response encoding to prevent gibberish
+            if response.encoding.lower() in ('iso-8859-1', 'ascii'):
+                response.encoding = response.apparent_encoding
+            
             if response.status_code in [403, 429, 503]:
-                return {
-                    "status": "blocked",
-                    "code": response.status_code,
-                    "error": "Anti-bot challenge detected. Requires proxy rotation or signature update."
+                error_data = {
+                    "status": response.status_code,
+                    "url": str(response.url),
+                    "error": "Anti-bot challenge or rate limit detected."
                 }
-            response.raise_for_status()
-            return {
-                "status": "success",
-                "code": response.status_code,
+                print(json.dumps(error_data, ensure_ascii=False))
+                return
+            
+            # Clean text by removing extra newlines and formatting into a single line
+            clean_text = " ".join(response.text.split())
+            
+            result_data = {
+                "status": response.status_code,
                 "url": str(response.url),
-                "content_length": len(response.text),
-                "sample_content": response.text[:500] # Return slice for structural analysis
+                "length": len(response.text),
+                "content": clean_text[:300]
             }
-        except httpx.RequestError as e:
-            return {
-                "status": "error",
+            
+            # ensure_ascii=False ensures Cyrillic characters remain human-readable
+            print(json.dumps(result_data, ensure_ascii=False))
+            
+        except Exception as e:
+            error_data = {
+                "status": "FAILED",
+                "url": url,
                 "error": str(e)
             }
-    async def close(self):
-        await self.client.aclose()
+            print(json.dumps(error_data, ensure_ascii=False))
+
 async def main():
-    # Example usage against a test endpoint
-    target_url = "https://httpbin.org/headers"
-    # Initialize engine (optional proxy format: "http://user:pass@ip:port")
-    scraper = ResilientScraperEngine(proxy_url=None)
-    print(f"[*] Initializing target scan: {target_url}")
-    result = await scraper.fetch_target(target_url)
-    print("\n[Execution Result]:")
-    print(json.dumps(result, indent=4, ensure_ascii=False))
-    await scraper.close()
+    target_url = input("Enter target URL (e.g. https://example.com): ").strip()
+    if not target_url.startswith("http"):
+        target_url = "https://" + target_url
+        
+    print(f"[*] Fetching resiliently: {target_url} ...\n")
+    await resilient_scrape(target_url)
+
 if __name__ == "__main__":
     asyncio.run(main())
+
 #How to Run:
 #Clone the repository, install the dependencies via pip install httpx, and execute the script using python main.py.
 
